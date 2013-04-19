@@ -17,8 +17,8 @@ Jeweler::Tasks.new do |gem|
   gem.name = "postgrestats"
   gem.homepage = "http://github.com/aia/postgrestats"
   gem.license = "MIT"
-  gem.summary = %Q{TODO: one-line summary of your gem}
-  gem.description = %Q{TODO: longer description of your gem}
+  gem.summary = %Q{Postgrestats is a library that captures important PostgreSQL statistics}
+  gem.description = %Q{Postgrestats is a library that captures important PostgreSQL statistics}
   gem.email = "artem@veremey.net"
   gem.authors = ["Artem Veremey"]
   # dependencies defined in Gemfile

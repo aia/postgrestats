@@ -1,0 +1,18 @@
+host: your database host
+user: the user to access your database
+password: user password to access te database
+dbname: initial database to connect to
+gmond:
+  tables:
+    host: your gmond host to send table data to
+    port: gmond port to send table data to
+    group: group name to publish table data as
+  aggregate:
+    host: your gmond host to send aggregate data to
+    port: gmond port to send aggregate data to
+    group: group name to publish aggregate data as
+exclude_dbs:
+  - template0
+  - template1
+  - postgres
+  - repmgr

@@ -1,6 +1,6 @@
 = postgrestats
 
-Description goes here.
+Postgrestats is a library that captures important PostgreSQL statistics.
 
 == Contributing to postgrestats
  

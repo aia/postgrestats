@@ -1,0 +1,181 @@
+#!/usr/bin/env ruby
+
+$LOAD_PATH.unshift File.dirname(__FILE__) + '/../lib'
+
+require 'postgrestats'
+require 'yaml'
+require 'gmetric'
+
+@counter_list = {}
+
+def counter_to_gauge(prefix, counter, value)
+  field_name = [prefix, counter].join("_")
+  if @counter_list[field_name].nil?
+    @counter_list[field_name] = value.to_f
+    return 0.0
+  else
+    ret = value.to_f - @counter_list[field_name]
+    @counter_list[field_name] = value.to_f
+    return ret
+  end
+end
+
+def publish_table_metric(stats_ds, publish_host, name, value, slope, units)
+  type = @watch_table_double.include?(name) ? 'double' : 'uint32'
+  c_value = @watch_table_double.include?(name) ? value.to_f : value.to_i
+
+  Ganglia::GMetric.send(
+    stats_ds.config['gmond']['tables']['host'],
+    stats_ds.config['gmond']['tables']['port'], {
+      :name => name,
+      :units => units,
+      :type => type,
+      :value => c_value,
+      :tmax => 60,
+      :dmax => 300,
+      :group => 'staging_tables',
+      :slope => slope,
+      :spoof => 1,
+      :hostname => "#{publish_host}:#{publish_host}"
+   })
+end
+
+def publish_aggregate_metric(stats_ds, publish_host, name, value, slope, units)
+  type = @watch_aggregate_double.include?(name) ? 'double' : 'uint32'
+  c_value = @watch_aggregate_double.include?(name) ? value.to_f : value.to_i
+
+  Ganglia::GMetric.send(
+    stats_ds.config['gmond']['aggregate']['host'],
+    stats_ds.config['gmond']['aggregate']['port'], {
+      :name => name,
+      :units => units,
+      :type => type,
+      :value => c_value,
+      :tmax => 60,
+      :dmax => 300,
+      :group => 'staging_aggregate',
+      :slope => slope,
+      :spoof => 1,
+      :hostname => "#{publish_host}:#{publish_host}"
+  })
+end
+
+def publish_hierarchy(stats_ds, tree)
+  tree.each_key do |table_name|
+    if table_name =~ /aggregate/
+      tree[table_name].each_key do |metric|
+        publish_aggregate_metric(
+          stats_ds,
+          table_name,
+          metric,
+          tree[table_name][metric]['value'],
+          tree[table_name][metric]['slope'],
+          tree[table_name][metric]['units']
+        )
+      end
+    else
+      tree[table_name].each_key do |metric|
+        publish_table_metric(
+          stats_ds,
+          table_name,
+          metric,
+          tree[table_name][metric]['value'],
+          tree[table_name][metric]['slope'],
+          tree[table_name][metric]['units']
+        )
+      end
+    end
+  end
+end
+
+
+STDOUT.sync = true
+
+usage = <<-USAGE
+  postgrestats <configuration file>
+USAGE
+
+if !ARGV[0].nil? && File.exists?(ARGV[0])
+  config = YAML.load_file(ARGV[0])
+else
+  puts usage
+  exit
+end
+
+stats = PostgreStats.new(config)
+
+dbs = stats.get_databases
+
+@table_metrics = stats.get_table_metrics
+@aggregate_metrics = stats.get_aggregate_metrics
+@watch_aggregate_double = stats.get_aggregate_ganglia_double
+@watch_table_double = stats.get_table_ganglia_double
+
+hierarchy = {}
+
+while (true)
+  begin
+    dbs.each do |database|
+      time_start = Time.now()
+      
+      hierarchy["#{database}_aggregate"] = {}
+      
+      stats.table_gauges.each_key do |gauge|
+        stats.send(stats.table_gauges[gauge]['handler'].to_sym, database).each do |table, value|
+          hierarchy["#{database}_#{table}"] ||= {}
+          hierarchy["#{database}_#{table}"][gauge] = {}
+          hierarchy["#{database}_#{table}"][gauge]['value'] = value
+          hierarchy["#{database}_#{table}"][gauge]['units'] = stats.table_gauges[gauge]['units']
+          hierarchy["#{database}_#{table}"][gauge]['slope'] = 'both'
+        end
+      end
+  
+      stats.table_counters.each_key do |counter|
+        stats.send(stats.table_counters[counter]['handler'].to_sym, database).each do |table, value|
+          hierarchy["#{database}_#{table}"] ||= {}
+          hierarchy["#{database}_#{table}"][counter] = {}
+          hierarchy["#{database}_#{table}"][counter]['value'] = counter_to_gauge(
+            "#{database}_#{table}",
+            counter,
+            value
+          )
+          hierarchy["#{database}_#{table}"][counter]['units'] = stats.table_counters[counter]['units']
+          hierarchy["#{database}_#{table}"][counter]['slope'] = 'both'
+        end
+      end
+  
+      hierarchy["#{database}_aggregate"] = {}
+      
+      stats.aggregate_gauges.each_key do |gauge|
+        hierarchy["#{database}_aggregate"][gauge] = {}
+        hierarchy["#{database}_aggregate"][gauge]['value'] = stats.send(
+          stats.aggregate_gauges[gauge]['handler'].to_sym, database
+        )
+        hierarchy["#{database}_aggregate"][gauge]['units'] = stats.aggregate_gauges[gauge]['units']
+        hierarchy["#{database}_aggregate"][gauge]['slope'] = 'both'
+      end
+  
+      stats.aggregate_counters.each_key do |counter|
+        hierarchy["#{database}_aggregate"][counter] = {}
+        hierarchy["#{database}_aggregate"][counter]['value'] = counter_to_gauge(
+          "#{database}_aggregate",
+          counter,
+          stats.send(stats.aggregate_counters[counter]['handler'].to_sym, database)
+        )
+        hierarchy["#{database}_aggregate"][counter]['units'] = stats.aggregate_counters[counter]['units']
+        hierarchy["#{database}_aggregate"][counter]['slope'] = 'both'
+      end
+      
+      time_mid = Time.now
+      stats.log.info("Processed #{database} database in #{time_mid - time_start}")
+      
+      publish_hierarchy(stats, hierarchy)
+      hierarchy = {}
+    end
+  rescue Exception => e  
+    puts e.message  
+    puts e.backtrace.inspect
+  end
+  
+  sleep(config['sleep'] || 30)
+end

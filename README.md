@@ -4,7 +4,7 @@ Postgrestats is a library that captures important PostgreSQL statistics.
 
 End result:
 
-![End result](https://github.com/aia/postgrestats/blob/master/img/ganglia-aggregate-example.png)
+![End result](img/ganglia-aggregate-example.png)
 
 ### Contributing to postgrestats
  
